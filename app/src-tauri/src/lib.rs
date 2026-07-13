@@ -174,8 +174,35 @@ fn extract_images(path: &str, staging_dir: &Path) -> Result<Vec<Value>, String> 
     Ok(images)
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProgressPayload {
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pages_done: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page_total: Option<usize>,
+}
+
 fn emit_progress(app: &AppHandle, event: &str, message: &str) {
-    let _ = app.emit(event, message.to_string());
+    emit_progress_full(app, event, message, None, None);
+}
+
+fn emit_progress_full(
+    app: &AppHandle,
+    event: &str,
+    message: &str,
+    pages_done: Option<usize>,
+    page_total: Option<usize>,
+) {
+    let _ = app.emit(
+        event,
+        ProgressPayload {
+            message: message.to_string(),
+            pages_done,
+            page_total,
+        },
+    );
 }
 
 fn run_pi_agent(app: Option<&AppHandle>, input: Value, progress_event: &str) -> Result<Value, String> {
@@ -207,8 +234,24 @@ fn run_pi_agent(app: Option<&AppHandle>, input: Value, progress_event: &str) -> 
                 if let Ok(value) = serde_json::from_str::<Value>(&line) {
                     if value.get("type").and_then(Value::as_str) == Some("progress") {
                         if let Some(message) = value.get("message").and_then(Value::as_str) {
+                            let pages_done = value
+                                .get("pagesDone")
+                                .or_else(|| value.get("pages_done"))
+                                .and_then(Value::as_u64)
+                                .map(|n| n as usize);
+                            let page_total = value
+                                .get("pageTotal")
+                                .or_else(|| value.get("page_total"))
+                                .and_then(Value::as_u64)
+                                .map(|n| n as usize);
                             if let Some(app) = handle.as_ref() {
-                                emit_progress(app, &event_name, message);
+                                emit_progress_full(
+                                    app,
+                                    &event_name,
+                                    message,
+                                    pages_done,
+                                    page_total,
+                                );
                             }
                             continue;
                         }
@@ -627,7 +670,13 @@ async fn ingest_document(
             );
         }
         let staging = knowledge_base_root().join(".staging").join(slugify(&title));
-        emit_progress(&app, "ingestion-progress", "Extracting images and graphs");
+        emit_progress_full(
+            &app,
+            "ingestion-progress",
+            &format!("Extracted {} pages · pulling images and graphs", raw_pages.len()),
+            Some(0),
+            Some(raw_pages.len()),
+        );
         let images = extract_images(&path, &staging).unwrap_or_else(|_| Vec::new());
         let pages: Vec<Value> = raw_pages
             .into_iter()
@@ -649,11 +698,18 @@ async fn ingest_document(
         )
     };
 
+    let page_total = pages.len();
+    emit_progress_full(
+        &app,
+        "ingestion-progress",
+        &format!("Copying source file to knowledge_base/source_files"),
+        Some(0),
+        Some(page_total),
+    );
     let document_dir = knowledge_base_root().join(slugify(&title));
     fs::create_dir_all(&document_dir)
         .map_err(|error| format!("Could not create knowledge folder: {error}"))?;
 
-    emit_progress(&app, "ingestion-progress", &format!("Copying source file to knowledge_base/source_files"));
     let copied_source = copy_source_file(file_path, &source_file)?;
     let archived_source_name = copied_source
         .file_name()
@@ -661,7 +717,7 @@ async fn ingest_document(
         .unwrap_or(&source_file)
         .to_string();
 
-    emit_progress(
+    emit_progress_full(
         &app,
         "ingestion-progress",
         &format!(
@@ -671,6 +727,8 @@ async fn ingest_document(
                 .and_then(|n| n.to_str())
                 .unwrap_or("document")
         ),
+        Some(0),
+        Some(page_total),
     );
 
     let result = run_pi_agent(

@@ -177,6 +177,7 @@ nav { display: grid; gap: 4px; } nav button { display: flex; align-items: center
   font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   border-top: 1px solid #e4e6e0;
 }
+.chat-progress .err { color: #893c2e; }
 .button { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; }.button.primary { color: white; background: #344630; border: 1px solid #344630; }.button.secondary { background: #fafbf8; border: 1px solid #cfd3ca; }.button:disabled { opacity: .5; cursor: default; }
 .knowledge-scroll { padding: 24px 32px 44px; }.search-panel { display: flex; align-items: center; gap: 14px; }.search-panel > span { color: #767d73; font-size: 11px; white-space: nowrap; }.search-box { flex: 1; display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 6px; height: 40px; padding-left: 11px; background: #fff; border: 1px solid #d4d8d0; border-radius: 6px; }.search-box svg { color: #7e857b; }.search-box input { min-width: 0; border: 0; outline: 0; background: transparent; font-size: 12px; }.search-box button { align-self: stretch; padding: 0 15px; color: white; background: #3b4b37; border: 0; border-radius: 0 5px 5px 0; cursor: pointer; font-size: 11px; }
 .drop-zone { max-width: 660px; min-height: 330px; margin: 70px auto 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 38px; text-align: center; border: 1px dashed #bfc5ba; background: #f9faf7; border-radius: 7px; }.drop-icon { display: grid; place-items: center; width: 52px; height: 52px; color: #4d6145; background: #e5ebdf; border-radius: 7px; }.drop-zone h2 { margin: 16px 0 6px; font: 700 18px "Libre Franklin"; }.drop-zone p { max-width: 470px; margin: 0 0 20px; color: #70776d; font-size: 13px; line-height: 1.55; }.drop-zone > span { margin-top: 13px; color: #90958d; font-size: 10px; }.results { margin-top: 22px; }.section-heading { display: flex; align-items: baseline; justify-content: space-between; }.section-heading h2 { font: 700 15px "Libre Franklin"; }.section-heading span { color: #7b8278; font-size: 11px; }.result { margin-top: 8px; padding: 13px 14px; background: #fafbf8; border: 1px solid #daddd5; border-radius: 5px; }.result > div { display: flex; align-items: center; gap: 8px; font-size: 12px; }.result > div span { margin-left: auto; color: #757d72; }.result p { margin: 8px 0 0 25px; color: #666d63; font-size: 11px; line-height: 1.55; }
@@ -279,6 +280,7 @@ nav { display: grid; gap: 4px; } nav button { display: flex; align-items: center
 .ingest-progress { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 16px; border-top: 1px solid #dfe2da; background: #f7f8f4; color: #5d665a; font-size: 11px; line-height: 1.45; }
 .ingest-progress-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ingest-progress-summary { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ingest-progress-summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ingest-progress-summary .ok { color: #3d632b; }
 .ingest-progress-summary .err { color: #893c2e; }
 .ingest-progress-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border: 1px solid #d0d5cb; border-radius: 4px; background: #fafbf8; color: #5d665a; font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -287,4 +289,98 @@ nav { display: grid; gap: 4px; } nav button { display: flex; align-items: center
 .ingest-progress .ok { color: #3d632b; }
 .ingest-progress .err { color: #893c2e; }
 
-@media (max-width: 760px) { .app-shell { grid-template-columns: 66px minmax(0,1fr); }.sidebar { padding: 16px 8px 10px; }.brand { padding: 0 8px 24px; }.brand > div:last-child, nav button { font-size: 0; }.brand-mark { flex: 0 0 auto; }.sidebar nav button { justify-content: center; }.connection { display: flex; justify-content: center; }.connection div, .connection > svg { display: none; }.composer-wrap { left: 66px; }.page-header { padding: 16px 20px; }.knowledge-scroll { padding: 18px; }.search-panel > span { display: none; }.document-body { grid-template-columns: 92px minmax(0,1fr); }.field-grid { grid-template-columns: 1fr; }.kb-columns { grid-template-columns: 180px minmax(0,1fr); } }
+.ingest-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(24, 30, 24, 0.52);
+}
+.ingest-overlay-card {
+  width: min(720px, 100%);
+  max-height: min(820px, calc(100vh - 56px));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px;
+  background: #f7f8f4;
+  border: 1px solid #cfd4cb;
+  border-radius: 10px;
+  box-shadow: 0 24px 70px rgba(18, 24, 18, 0.28);
+}
+.ingest-overlay-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ingest-overlay-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+.ingest-overlay-title h2 {
+  margin: 0;
+  color: #243024;
+  font: 700 20px/1.2 "Libre Franklin", sans-serif;
+}
+.ingest-overlay-title p {
+  margin: 6px 0 0;
+  color: #5f685b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ingest-overlay-meter {
+  display: grid;
+  gap: 8px;
+}
+.ingest-overlay-meter-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #465341;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ingest-overlay-track {
+  height: 10px;
+  overflow: hidden;
+  background: #e4e7e0;
+  border: 1px solid #d4d8d0;
+  border-radius: 999px;
+}
+.ingest-overlay-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #3d5238, #6f8f4e);
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+.ingest-overlay-fill.indeterminate {
+  width: 36%;
+  animation: ingest-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes ingest-indeterminate {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+.ingest-overlay-log {
+  flex: 1;
+  min-height: 220px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px 14px;
+  color: #4f574c;
+  background: #eef0ea;
+  border: 1px solid #dfe2da;
+  border-radius: 6px;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+}
+.ingest-overlay-log .err { color: #893c2e; }
+
+@media (max-width: 760px) { .app-shell { grid-template-columns: 66px minmax(0,1fr); }.sidebar { padding: 16px 8px 10px; }.brand { padding: 0 8px 24px; }.brand > div:last-child, nav button { font-size: 0; }.brand-mark { flex: 0 0 auto; }.sidebar nav button { justify-content: center; }.connection { display: flex; justify-content: center; }.connection div, .connection > svg { display: none; }.composer-wrap { left: 66px; }.page-header { padding: 16px 20px; }.knowledge-scroll { padding: 18px; }.search-panel > span { display: none; }.document-body { grid-template-columns: 92px minmax(0,1fr); }.field-grid { grid-template-columns: 1fr; }.kb-columns { grid-template-columns: 180px minmax(0,1fr); }.ingest-overlay { padding: 16px; }.ingest-overlay-card { padding: 16px; gap: 14px; }.ingest-overlay-log { min-height: 160px; max-height: 280px; } }

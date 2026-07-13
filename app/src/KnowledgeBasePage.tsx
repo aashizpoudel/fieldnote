@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -46,7 +46,7 @@ import {
   deleteKnowledgeEntry,
 } from "./api";
 import { MarkdownAnchor, onMarkdownLinkClickCapture } from "./markdownLinks";
-import type { KnowledgeNode, Settings } from "./types";
+import type { KnowledgeNode, ProgressPayload, Settings } from "./types";
 
 function MarkdownImage({
   src,
@@ -228,9 +228,13 @@ export default function KnowledgeBasePage({
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [ingesting, setIngesting] = useState(false);
+  const [showIngestOverlay, setShowIngestOverlay] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [progressLines, setProgressLines] = useState<string[]>([]);
+  const [pagesDone, setPagesDone] = useState(0);
+  const [pageTotal, setPageTotal] = useState(0);
   const [showProgressLog, setShowProgressLog] = useState(() => {
     try {
       return localStorage.getItem("fieldnote-show-progress-log") === "1";
@@ -239,6 +243,45 @@ export default function KnowledgeBasePage({
     }
   });
   const editorKey = useMemo(() => `${selectedPath ?? "empty"}-${mode}`, [selectedPath, mode]);
+  const latestProgress = progressLines.at(-1);
+  const overlayLogRef = useRef<HTMLDivElement>(null);
+  const pagePercent = pageTotal > 0 ? Math.min(100, Math.round((pagesDone / pageTotal) * 100)) : 0;
+  const ingestSessionRef = useRef(0);
+
+  // #region agent log
+  const kbRenderCount = useRef(0);
+  kbRenderCount.current += 1;
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      fetch("/__debug_log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "7f8a2c" },
+        body: JSON.stringify({
+          sessionId: "7f8a2c",
+          hypothesisId: "H1",
+          location: "KnowledgeBasePage.tsx:render-rate",
+          message: "KB idle state",
+          data: {
+            renders: kbRenderCount.current,
+            ingesting,
+            showIngestOverlay,
+            progressLines: progressLines.length,
+            pagesDone,
+            pageTotal,
+            selectedPath,
+            mode,
+            busy,
+            status: status.slice(0, 80),
+            session: ingestSessionRef.current,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      kbRenderCount.current = 0;
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [ingesting, showIngestOverlay, progressLines.length, pagesDone, pageTotal, selectedPath, mode, busy, status]);
+  // #endregion
 
   function toggleProgressLog() {
     setShowProgressLog((current) => {
@@ -250,6 +293,48 @@ export default function KnowledgeBasePage({
       }
       return next;
     });
+  }
+
+  function showActivityLog() {
+    setShowProgressLog(true);
+    try {
+      localStorage.setItem("fieldnote-show-progress-log", "1");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function errorDetail(cause: unknown): string {
+    if (cause instanceof Error && cause.message) return cause.message;
+    if (typeof cause === "string" && cause.trim()) return cause;
+    try {
+      return JSON.stringify(cause);
+    } catch {
+      return String(cause);
+    }
+  }
+
+  function beginIngestUi() {
+    ingestSessionRef.current += 1;
+    setBusy(true);
+    setIngesting(true);
+    setShowIngestOverlay(true);
+    setStatus("");
+    setPagesDone(0);
+    setPageTotal(0);
+    setProgressLines(["Preparing your source…"]);
+  }
+
+  function markIngestActiveFromProgress() {
+    setBusy(true);
+    setIngesting(true);
+    setShowIngestOverlay(true);
+  }
+
+  function endIngestUi(options?: { keepOverlay?: boolean }) {
+    setIngesting(false);
+    setBusy(false);
+    if (!options?.keepOverlay) setShowIngestOverlay(false);
   }
 
   const refreshTree = useCallback(async () => {
@@ -265,14 +350,59 @@ export default function KnowledgeBasePage({
   }, [refreshTree]);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<string>("ingestion-progress", (event) => {
-      setProgressLines((current) => [...current.slice(-40), event.payload]);
+    void listen<ProgressPayload | string>("ingestion-progress", (event) => {
+      const payload = event.payload;
+      const message = typeof payload === "string" ? payload : payload?.message;
+      if (!message) return;
+      const done = typeof payload === "object" && payload ? payload.pagesDone : undefined;
+      const total = typeof payload === "object" && payload ? payload.pageTotal : undefined;
+      // #region agent log
+      fetch("/__debug_log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "7f8a2c" },
+        body: JSON.stringify({
+          sessionId: "7f8a2c",
+          hypothesisId: "H3",
+          location: "KnowledgeBasePage.tsx:ingestion-progress",
+          message: "progress event",
+          data: { message: String(message).slice(0, 120), done, total },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      markIngestActiveFromProgress();
+      setProgressLines((current) => [...current.slice(-80), message]);
+      if (typeof done === "number") setPagesDone(done);
+      if (typeof total === "number") setPageTotal(total);
+      // If the page remounted (e.g. Vite HMR) while Rust ingestion kept running,
+      // the original chooseSource finally block is gone — close from the terminal event.
+      if (/^Ingestion complete\b/i.test(message)) {
+        if (typeof total === "number") setPagesDone(total);
+        window.setTimeout(() => {
+          endIngestUi();
+          void refreshTree();
+        }, 400);
+      }
     }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
       unlisten = fn;
     });
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!showIngestOverlay) return;
+    const node = overlayLogRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [progressLines, showIngestOverlay]);
 
   async function openFile(relativePath: string) {
     if (mode === "edit" && dirty && !window.confirm("Discard your changes?")) return;
@@ -385,19 +515,23 @@ export default function KnowledgeBasePage({
       ],
     });
     if (!path) return;
-    setBusy(true);
-    setStatus("");
-    setProgressLines(["Preparing your source…"]);
+    beginIngestUi();
+    const session = ingestSessionRef.current;
     try {
       const result = await ingestDocument(path, settings);
-      setProgressLines((current) => [...current.slice(-40), `Finished · ${result.fileCount} notes · ${result.imageCount} images`]);
+      if (session !== ingestSessionRef.current) return;
+      setProgressLines((current) => [...current.slice(-80), `Finished · ${result.fileCount} notes · ${result.imageCount} images`]);
       setStatus(`Added “${result.sourceFile}” to your sources.`);
+      endIngestUi();
       await refreshTree();
     } catch (cause) {
+      if (session !== ingestSessionRef.current) return;
+      const detail = errorDetail(cause);
       setStatus("Couldn't add that source. Check Settings and try again.");
+      setProgressLines((current) => [...current.slice(-80), `Error: ${detail}`]);
+      showActivityLog();
+      endIngestUi({ keepOverlay: true });
       console.error(cause);
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -528,14 +662,16 @@ export default function KnowledgeBasePage({
         </section>
       </div>
 
-      {(busy || progressLines.length > 0 || status) && (
+      {(ingesting || progressLines.length > 0 || status) && !showIngestOverlay && (
         <div className="ingest-progress">
           <div className="ingest-progress-bar">
             <div className="ingest-progress-summary">
-              {busy && <LoaderCircle className="spin" size={15} />}
-              <span className={status && !busy && !(status.startsWith("Added") || status === "Saved") ? "err" : status && !busy ? "ok" : undefined}>
-                {busy
-                  ? "Adding your source…"
+              {ingesting && <LoaderCircle className="spin" size={15} />}
+              <span className={status && !ingesting && !(status.startsWith("Added") || status === "Saved") ? "err" : status && !ingesting ? "ok" : undefined}>
+                {ingesting
+                  ? latestProgress
+                    ? `Processing · ${latestProgress}`
+                    : "Processing…"
                   : status.startsWith("Added")
                     ? "Source added."
                     : status || "Ready."}
@@ -555,7 +691,9 @@ export default function KnowledgeBasePage({
           {showProgressLog && (
             <div className="ingest-progress-log">
               {progressLines.map((line, index) => (
-                <div key={`${index}-${line}`}>{line}</div>
+                <div key={`${index}-${line}`} className={line.startsWith("Error:") ? "err" : undefined}>
+                  {line}
+                </div>
               ))}
               {status && (
                 <div className={status.startsWith("Added") || status === "Saved" ? "ok" : "err"}>
@@ -564,6 +702,62 @@ export default function KnowledgeBasePage({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {showIngestOverlay && (
+        <div className="ingest-overlay" role="dialog" aria-modal="true" aria-label="Source ingestion progress">
+          <div className="ingest-overlay-card">
+            <div className="ingest-overlay-header">
+              <div className="ingest-overlay-title">
+                {ingesting ? <LoaderCircle className="spin" size={22} /> : null}
+                <div>
+                  <h2>{ingesting ? "Processing source" : "Ingestion stopped"}</h2>
+                  <p>{latestProgress || (ingesting ? "Getting started…" : status || "Ready.")}</p>
+                </div>
+              </div>
+              {!ingesting && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setShowIngestOverlay(false)}
+                  title="Close"
+                  aria-label="Close ingestion overlay"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+
+            <div className="ingest-overlay-meter" aria-live="polite">
+              <div className="ingest-overlay-meter-label">
+                <span>Pages processed</span>
+                <span>
+                  {pageTotal > 0 ? `${pagesDone} / ${pageTotal}` : ingesting ? "Counting pages…" : "—"}
+                </span>
+              </div>
+              <div
+                className="ingest-overlay-track"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={pageTotal || 100}
+                aria-valuenow={pagesDone}
+              >
+                <div
+                  className={`ingest-overlay-fill${ingesting && pageTotal === 0 ? " indeterminate" : ""}`}
+                  style={pageTotal > 0 ? { width: `${pagePercent}%` } : undefined}
+                />
+              </div>
+            </div>
+
+            <div className="ingest-overlay-log" ref={overlayLogRef}>
+              {progressLines.map((line, index) => (
+                <div key={`${index}-${line}`} className={line.startsWith("Error:") ? "err" : undefined}>
+                  {line}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </main>

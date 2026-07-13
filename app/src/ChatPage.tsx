@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { chatWithKnowledge, getKnowledgeBaseRoot } from "./api";
 import { MarkdownAnchor } from "./markdownLinks";
-import type { ChatMessage, ChatSource, Settings } from "./types";
+import type { ChatMessage, ChatSource, ProgressPayload, Settings } from "./types";
 
 const HISTORY_KEY = "fieldnote-chat-history-v1";
 const SIDEBAR_KEY = "fieldnote-chat-sidebar-open";
@@ -174,8 +174,10 @@ export default function ChatPage({
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    void listen<string>("chat-progress", (event) => {
-      setProgressLines((current) => [...current.slice(-40), event.payload]);
+    void listen<ProgressPayload | string>("chat-progress", (event) => {
+      const payload = event.payload;
+      const message = typeof payload === "string" ? payload : payload.message;
+      setProgressLines((current) => [...current.slice(-40), message]);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -267,7 +269,15 @@ export default function ChatPage({
         },
       ]);
     } catch (cause) {
+      const detail =
+        cause instanceof Error && cause.message
+          ? cause.message
+          : typeof cause === "string" && cause.trim()
+            ? cause
+            : String(cause);
       setError("Couldn't finish that answer. Check your connection in Settings, then try again.");
+      setProgressLines((current) => [...current.slice(-40), `Error: ${detail}`]);
+      setShowDetails(true);
       console.error(cause);
     } finally {
       setBusy(false);
@@ -425,7 +435,9 @@ export default function ChatPage({
             {showDetails && (
               <div className="chat-progress-log">
                 {progressLines.map((line, index) => (
-                  <div key={`${index}-${line}`}>{line}</div>
+                  <div key={`${index}-${line}`} className={line.startsWith("Error:") ? "err" : undefined}>
+                    {line}
+                  </div>
                 ))}
               </div>
             )}

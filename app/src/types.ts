@@ -25,6 +25,12 @@ export type IngestResult = {
   imageCount: number;
 };
 
+export type ProgressPayload = {
+  message: string;
+  pagesDone?: number;
+  pageTotal?: number;
+};
+
 export type ChatSource = {
   relativePath: string;
   title: string;

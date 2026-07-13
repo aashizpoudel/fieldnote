@@ -18,20 +18,21 @@ Convert the provided source document into markdown knowledge files. Do not inven
 Write **GitHub-flavored Markdown only**. Never emit HTML tags or HTML entities in `body_markdown`.
 
 Forbidden examples:
+
 - `<br>`, `<br/>`, `<br />`
 - `<p>`, `<div>`, `<span>`, `<table>`, `<tr>`, `<td>`, `<b>`, `<i>`, `<strong>`, `<em>`
 - Any other raw HTML
 
 When a table cell or list needs multiple values on separate lines in the source:
+
 - Prefer a Markdown table with one logical value per cell
-- Or join values with ` · `, `; `, or `, ` inside the cell
+- Or join values with `·`, `; `, or `, ` inside the cell
 - Or use a nested bullet list outside the table
 - Do **not** insert `<br>` to force line breaks
 
-Good cell: `14 · 15 · 2`  
-Bad cell: `14<br>15<br>2`
+Good cell: `14 · 15 · 2`Bad cell: `14<br>15<br>2`
 
-## Filename topic_slug rules
+## Filename topic\_slug rules
 
 - Good examples: `dicamba-registration-status`, `soybean-leaf-cupping-causes`, `photosystem-ii-herbicide-inhibitors`
 - Bad examples: `pages-1-2`, `section-3`, `chunk-4`, `introduction-continued`
@@ -42,15 +43,15 @@ Bad cell: `14<br>15<br>2`
 The write tool adds YAML front matter with at least:
 
 - title
-- source_file
-- source_title
-- page_start / page_end / pages
+- source\_file
+- source\_title
+- page\_start / page\_end / pages
 - topics
-- ingestion_method
+- ingestion\_method
 
 ## Tool use
 
 - Use tools to inspect pages, embed images into `assets/`, and write markdown chunk files
 - Prefer small, faithful chunks over large summaries
-- When images exist for a page range, call `embed_image` and include the returned markdown image syntax in the body
+- When images exist for a page range, call `embed_image` and include the returned markdown image syntax in the body. You may also call analyze\_image tool to analyze the image and save the image to some relevant name and embed the image with proper caption so that chat agent can identify image easily.
 - Process pages in order until every page is covered, then call `finish_ingestion`

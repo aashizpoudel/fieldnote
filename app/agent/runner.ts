@@ -77,8 +77,8 @@ function renderPrompt(template: string, values: Record<string, string | number>)
   });
 }
 
-function progress(message: string) {
-  process.stderr.write(`${JSON.stringify({ type: "progress", message })}\n`);
+function progress(message: string, extras?: { pagesDone?: number; pageTotal?: number }) {
+  process.stderr.write(`${JSON.stringify({ type: "progress", message, ...extras })}\n`);
 }
 
 function providerBaseUrl(url: string): string {
@@ -112,7 +112,7 @@ function createAgent(config: Config, systemPrompt: string, tools: AgentTool[] = 
   });
 }
 
-async function prompt(agent: Agent, text: string): Promise<string> {
+async function prompt(agent: Agent, text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<string> {
   let output = "";
   const unsubscribe = agent.subscribe((event) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
@@ -123,12 +123,78 @@ async function prompt(agent: Agent, text: string): Promise<string> {
     }
   });
   try {
-    await agent.prompt(text);
+    await agent.prompt(text, images);
   } finally {
     unsubscribe();
   }
   if (agent.state.errorMessage) throw new Error(agent.state.errorMessage);
   return output.trim();
+}
+
+function looksLikeNoImageCapability(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /image|vision|multimodal|unsupported.*(media|content)|does not support|can't process|cannot process|invalid.*image|no image/i.test(
+    text,
+  );
+}
+
+async function analyzeImageWithVisionAgent(
+  config: Config,
+  relativePath: string,
+  question: string,
+  image: { data: Buffer; mimeType: string },
+): Promise<string> {
+  const systemPrompt = await loadPrompt("analyze-image-system.md");
+  const userTemplate = await loadPrompt("analyze-image-user.md");
+  const userPrompt = renderPrompt(userTemplate, {
+    image_path: relativePath,
+    question,
+  });
+  const agent = createAgent(config, systemPrompt, []);
+  try {
+    const content = await prompt(agent, userPrompt, [
+      { type: "image", data: image.data.toString("base64"), mimeType: image.mimeType },
+    ]);
+    if (!content) return "no image capability";
+    return content;
+  } catch (cause) {
+    if (looksLikeNoImageCapability(cause)) return "no image capability";
+    return "no image capability";
+  }
+}
+
+async function runAnalyzeImageTool(
+  config: Config,
+  label: string,
+  absolute: string,
+  question?: string,
+): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> {
+  progress(`Analyzing image ${label}`);
+  try {
+    const original = await readFile(absolute);
+    const sourceMime = mimeFromPath(absolute);
+    if (!sourceMime.startsWith("image/")) {
+      return {
+        content: [{ type: "text", text: "no image capability" }],
+        details: { path: label, ok: false },
+      };
+    }
+    const ask =
+      question?.trim() || "Describe the important details in this knowledge-base figure.";
+    const analysis = await analyzeImageWithVisionAgent(config, label, ask, {
+      data: original,
+      mimeType: sourceMime,
+    });
+    return {
+      content: [{ type: "text", text: analysis }],
+      details: { path: label, ok: analysis !== "no image capability" },
+    };
+  } catch {
+    return {
+      content: [{ type: "text", text: "no image capability" }],
+      details: { path: label, ok: false },
+    };
+  }
 }
 
 function sanitizeMarkdownBody(markdown: string): string {
@@ -300,6 +366,40 @@ function createIngestTools(input: IngestInput, written: WrittenFile[], embeddedI
     },
   };
 
+  const analyze_image: AgentTool = {
+    name: "analyze_image",
+    label: "Analyze image",
+    description:
+      "Analyze an extracted PDF image by path. Pass an image id (img-0), the asset fileName (page-001-img-000.png), or a document-relative path such as ./assets/page-001-img-000.png. Returns a text description, or 'no image capability'.",
+    parameters: Type.Object({
+      path: Type.String({
+        description: "Image id, fileName, or path under the document folder (e.g. ./assets/page-001-img-000.png)",
+      }),
+      question: Type.Optional(Type.String({ description: "What to look for in the image" })),
+    }),
+    execute: async (_id, raw) => {
+      const params = raw as { path: string; question?: string };
+      const requested = params.path.replace(/^\/+/, "").trim();
+      const byId = imageMap.get(requested);
+      const byFileName = input.images.find(
+        (image) => image.fileName === requested || image.fileName === path.basename(requested),
+      );
+      const image = byId ?? byFileName;
+      if (image) {
+        return runAnalyzeImageTool(input.config, image.fileName, image.stagingPath, params.question);
+      }
+      const documentRoot = path.resolve(input.documentDir);
+      const absolute = path.resolve(input.documentDir, requested.replace(/^\.\//, ""));
+      if (absolute !== documentRoot && !absolute.startsWith(documentRoot + path.sep)) {
+        return {
+          content: [{ type: "text", text: "no image capability" }],
+          details: { path: requested, ok: false },
+        };
+      }
+      return runAnalyzeImageTool(input.config, requested, absolute, params.question);
+    },
+  };
+
   const write_markdown_chunk: AgentTool = {
     name: "write_markdown_chunk",
     label: "Write markdown chunk",
@@ -349,7 +449,7 @@ function createIngestTools(input: IngestInput, written: WrittenFile[], embeddedI
       const body = sanitizeMarkdownBody(params.body_markdown.trim());
       await writeFile(path.join(input.documentDir, fileName), `${frontMatter}${body}\n`, "utf8");
       written.push({ fileName, pageStart: start, pageEnd: end });
-      progress(`Wrote ${fileName}`);
+      pageProgress(`Wrote ${fileName}`, written, input.pages.length);
       return {
         content: [{ type: "text", text: JSON.stringify({ fileName, page_start: start, page_end: end }) }],
         details: { fileName },
@@ -395,6 +495,7 @@ function createIngestTools(input: IngestInput, written: WrittenFile[], embeddedI
     read_pages,
     list_images_for_pages,
     embed_image,
+    analyze_image,
     write_markdown_chunk,
     list_written_files,
     finish_ingestion,
@@ -577,7 +678,8 @@ function createChatTools(input: ChatInput, answer: { content: string; sources: C
   const analyze_image: AgentTool = {
     name: "analyze_image",
     label: "Analyze image",
-    description: "Load a knowledge-base image for vision analysis. Pass a relative image path such as folder/assets/page-001-img-000.png.",
+    description:
+      "Analyze a knowledge-base image by path. Pass a relative image path such as folder/assets/page-001-img-000.png. Returns a text description, or 'no image capability' if vision is unavailable.",
     parameters: Type.Object({
       path: Type.String({ description: "Relative image path inside knowledge_base" }),
       question: Type.Optional(Type.String({ description: "What to look for in the image" })),
@@ -586,18 +688,7 @@ function createChatTools(input: ChatInput, answer: { content: string; sources: C
       const params = raw as { path: string; question?: string };
       const relative = params.path.replace(/^\/+/, "");
       const absolute = assertInsideRoot(root, relative);
-      progress(`Analyzing image ${relative}`);
-      const bytes = await readFile(absolute);
-      const mimeType = mimeFromPath(absolute);
-      if (!mimeType.startsWith("image/")) throw new Error("File is not an image");
-      const question = params.question?.trim() || "Describe the important details in this knowledge-base figure.";
-      return {
-        content: [
-          { type: "text", text: `Image path: ${relative}\n${question}` },
-          { type: "image", data: bytes.toString("base64"), mimeType },
-        ],
-        details: { path: relative },
-      };
+      return runAnalyzeImageTool(input.config, relative, absolute, params.question);
     },
   };
 
@@ -686,13 +777,20 @@ function coveredPages(written: WrittenFile[]): Set<number> {
   return pages;
 }
 
+function pageProgress(message: string, written: WrittenFile[], pageTotal: number) {
+  progress(message, { pagesDone: coveredPages(written).size, pageTotal });
+}
+
 async function ingest(input: IngestInput) {
   await mkdir(input.documentDir, { recursive: true });
   const written: WrittenFile[] = [];
   const embeddedImages: string[] = [];
   const tools = createIngestTools(input, written, embeddedImages);
 
-  progress(`Preparing knowledge folder for ${input.sourceFile}`);
+  progress(`Preparing knowledge folder for ${input.sourceFile}`, {
+    pagesDone: 0,
+    pageTotal: input.pages.length,
+  });
   const systemPrompt = await loadPrompt("ingest-system.md");
   const userTemplate = await loadPrompt("ingest-user.md");
   const userPrompt = renderPrompt(userTemplate, {
@@ -709,7 +807,7 @@ async function ingest(input: IngestInput) {
   const covered = coveredPages(written);
   const missing = input.pages.map((page) => page.pageNumber).filter((page) => !covered.has(page));
   if (missing.length) {
-    progress(`Filling ${missing.length} uncovered pages with fallback chunks`);
+    pageProgress(`Filling ${missing.length} uncovered pages with fallback chunks`, written, input.pages.length);
     const usedFilenames = new Set(
       (await readdir(input.documentDir))
         .filter((name) => name.endsWith(".md"))
@@ -751,7 +849,7 @@ async function ingest(input: IngestInput) {
       });
       await writeFile(path.join(input.documentDir, fileName), `${frontMatter}${bodies.join("\n\n")}\n`, "utf8");
       written.push({ fileName, pageStart: start, pageEnd: end });
-      progress(`Wrote fallback ${fileName}`);
+      pageProgress(`Wrote fallback ${fileName}`, written, input.pages.length);
     }
   }
 
@@ -770,7 +868,7 @@ async function ingest(input: IngestInput) {
     await writeFile(path.join(input.documentDir, "README.md"), readme, "utf8");
   }
 
-  progress(`Ingestion complete · ${written.length} files`);
+  pageProgress(`Ingestion complete · ${written.length} files`, written, input.pages.length);
   return {
     title: input.title,
     sourceFile: input.sourceFile,

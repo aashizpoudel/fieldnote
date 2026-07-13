@@ -13,7 +13,8 @@ The current folder structure is included below. Use it to decide which folders a
 - `browse_knowledge_base` — list folders and markdown/image files under a relative path
 - `read_knowledge_file` — read the full content of a markdown file
 - `search_knowledge_base` — find files containing a text query
-- `analyze_image` — vision-inspect an image asset from the knowledge base
+- `analyze_image` — given a knowledge-base-relative image path, returns a text description of what is visible in that image (or reports no image capability)
+
 - `finish_answer` — submit your final user-facing answer and the source files you used
 
 ## Response style (strict)

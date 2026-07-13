@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   Check,
@@ -11,6 +11,23 @@ import { testLlm } from "./api";
 import ChatPage from "./ChatPage";
 import KnowledgeBasePage from "./KnowledgeBasePage";
 import type { Settings } from "./types";
+
+// #region agent log
+const __dbg = (hypothesisId: string, location: string, message: string, data: Record<string, unknown> = {}) => {
+  fetch("/__debug_log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "7f8a2c" },
+    body: JSON.stringify({
+      sessionId: "7f8a2c",
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+};
+// #endregion
 
 const defaultSettings: Settings = {
   llmApiUrl: "https://localhost:1443/v1",
@@ -105,6 +122,47 @@ export default function App() {
     () => Boolean(settings.llmApiUrl && settings.llmApiKey && settings.llmModel),
     [settings],
   );
+
+  // #region agent log
+  useEffect(() => {
+    let renders = 0;
+    let last = performance.now();
+    const onLongTask = (list: PerformanceObserverEntryList) => {
+      for (const entry of list.getEntries()) {
+        if (entry.duration >= 40) {
+          __dbg("H1", "App.tsx:longtask", "long task", { duration: Math.round(entry.duration), name: entry.name });
+        }
+      }
+    };
+    let observer: PerformanceObserver | undefined;
+    try {
+      observer = new PerformanceObserver(onLongTask);
+      observer.observe({ entryTypes: ["longtask"] });
+    } catch {
+      /* longtask unsupported */
+    }
+    const id = window.setInterval(() => {
+      const now = performance.now();
+      __dbg("H1", "App.tsx:render-rate", "idle render/interval probe", {
+        view,
+        renders,
+        elapsedMs: Math.round(now - last),
+        hidden: document.hidden,
+      });
+      renders = 0;
+      last = now;
+    }, 2000);
+    (window as unknown as { __fnRenderBump?: () => void }).__fnRenderBump = () => {
+      renders += 1;
+    };
+    __dbg("H5", "App.tsx:mount", "App mounted", { view, connectionReady });
+    return () => {
+      window.clearInterval(id);
+      observer?.disconnect();
+    };
+  }, [view, connectionReady]);
+  (window as unknown as { __fnRenderBump?: () => void }).__fnRenderBump?.();
+  // #endregion
 
   function save(value: Settings) {
     setSettings(value);
