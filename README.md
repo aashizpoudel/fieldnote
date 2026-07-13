@@ -1,6 +1,12 @@
+
+
 # Fieldnote
 
 Fieldnote helps producers and crop advisors ask questions against **their own** compiled crop and weed management sources—herbicide guides, extension pubs, scouting notes, and related PDFs. Add documents to a local library, then ask in plain language; answers come only from what you’ve added.
+
+Currently building it for hackathon at ASABE AIM 2026.d.
+
+
 
 ## Requirements
 
