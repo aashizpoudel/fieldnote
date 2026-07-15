@@ -706,9 +706,7 @@ function createChatTools(input: ChatInput, answer: { content: string; sources: C
     }),
     execute: async (_id, raw) => {
       const params = raw as { content: string; source_files: string[] };
-      const cleaned = sanitizeMarkdownBody(params.content)
-        .replace(/^#{1,6}\s+/gm, "")
-        .trim();
+      const cleaned = sanitizeChatAnswer(params.content);
       if (!cleaned) throw new Error("finish_answer content cannot be empty");
       const sources: ChatSource[] = [];
       for (const item of params.source_files ?? []) {
@@ -742,6 +740,12 @@ function createChatTools(input: ChatInput, answer: { content: string; sources: C
   return [browse_knowledge_base, read_knowledge_file, search_knowledge_base, analyze_image, finish_answer];
 }
 
+function sanitizeChatAnswer(markdown: string): string {
+  return sanitizeMarkdownBody(markdown)
+    .replace(/^#{1,6}\s+/gm, "")
+    .trim();
+}
+
 async function chat(input: ChatInput) {
   const answer = { content: "", sources: [] as ChatSource[] };
   const tools = createChatTools(input, answer);
@@ -758,7 +762,24 @@ async function chat(input: ChatInput) {
 
   progress("Chat agent started");
   const agent = createAgent(input.config, systemPrompt, tools);
-  await prompt(agent, userPrompt);
+  let output = await prompt(agent, userPrompt);
+
+  // Models sometimes stop after writing the answer in plain text without calling finish_answer.
+  if (!answer.content) {
+    progress("Reminding model to call finish_answer");
+    output = (await prompt(
+      agent,
+      "You must call the finish_answer tool now with your final user-facing answer and source_files. Do not reply with plain text.",
+    )) || output;
+  }
+
+  if (!answer.content) {
+    const fallback = sanitizeChatAnswer(output);
+    if (fallback) {
+      progress("Using model text as finish_answer fallback");
+      answer.content = fallback;
+    }
+  }
 
   if (!answer.content) {
     throw new Error("Chat agent finished without calling finish_answer");
