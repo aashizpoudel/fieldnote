@@ -1,12 +1,14 @@
+use pdf_oxide::PdfDocument;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::thread;
-use tauri::{AppHandle, Emitter};
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +61,9 @@ struct ConnectionTest {
     message: String,
 }
 
+static KNOWLEDGE_BASE_ROOT: OnceLock<PathBuf> = OnceLock::new();
+static PROMPTS_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -67,11 +72,93 @@ fn workspace_root() -> PathBuf {
 }
 
 fn knowledge_base_root() -> PathBuf {
+    if let Some(root) = KNOWLEDGE_BASE_ROOT.get() {
+        return root.clone();
+    }
     let root = workspace_root().join("knowledge_base");
     if !root.exists() {
         let _ = fs::create_dir_all(&root);
     }
     root
+}
+
+fn prompts_root() -> PathBuf {
+    if let Some(root) = PROMPTS_ROOT.get() {
+        return root.clone();
+    }
+    workspace_root().join("prompts")
+}
+
+fn agent_command() -> Result<(PathBuf, Vec<String>), String> {
+    let sidecar_name = if cfg!(windows) {
+        "fieldnote-agent.exe"
+    } else {
+        "fieldnote-agent"
+    };
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let next_to_exe = dir.join(sidecar_name);
+            if next_to_exe.exists() {
+                return Ok((next_to_exe, Vec::new()));
+            }
+        }
+    }
+
+    let binaries = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    if let Ok(entries) = fs::read_dir(&binaries) {
+        let mut matches: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("fieldnote-agent-"))
+            })
+            .collect();
+        matches.sort();
+        if let Some(path) = matches.into_iter().next() {
+            return Ok((path, Vec::new()));
+        }
+    }
+
+    // Dev fallback when the sidecar has not been built yet.
+    let runner = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../agent-dist/runner.js")
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "Pi agent sidecar is missing and agent-dist/runner.js is not built: {error}. \
+                 Run `npm run build:agent-sidecar` (requires bun) or `npm run build:agent`."
+            )
+        })?;
+    Ok((
+        PathBuf::from("node"),
+        vec![runner.to_string_lossy().into_owned()],
+    ))
+}
+
+fn configure_runtime_paths(app: &AppHandle) -> Result<(), String> {
+    let kb = if cfg!(debug_assertions) {
+        workspace_root().join("knowledge_base")
+    } else {
+        app.path()
+            .app_data_dir()
+            .map_err(|error| format!("Could not resolve app data dir: {error}"))?
+            .join("knowledge_base")
+    };
+    fs::create_dir_all(&kb)
+        .map_err(|error| format!("Could not create knowledge base dir: {error}"))?;
+    let _ = KNOWLEDGE_BASE_ROOT.set(kb);
+
+    let resource_prompts = app
+        .path()
+        .resolve("prompts", BaseDirectory::Resource)
+        .ok()
+        .filter(|dir| dir.join("chat-system.md").exists());
+    let prompts = resource_prompts.unwrap_or_else(|| workspace_root().join("prompts"));
+    let _ = PROMPTS_ROOT.set(prompts);
+    Ok(())
 }
 
 fn slugify(input: &str) -> String {
@@ -94,83 +181,60 @@ fn slugify(input: &str) -> String {
     }
 }
 
-fn run_tool(program: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(program).args(args).output().map_err(|error| {
-        format!("Could not run {program}. Install Poppler and ensure {program} is on PATH: {error}")
-    })?;
-    if !output.status.success() {
-        return Err(format!(
-            "{program} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+fn extract_pdf_pages(path: &str) -> Result<Vec<String>, String> {
+    let doc = PdfDocument::open(path).map_err(|error| format!("Could not open PDF: {error}"))?;
+    let page_count = doc
+        .page_count()
+        .map_err(|error| format!("Could not read PDF page count: {error}"))?;
+    if page_count == 0 {
+        return Ok(Vec::new());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
 
-fn image_pages(path: &str) -> Result<HashSet<usize>, String> {
-    let listing = run_tool("pdfimages", &["-list", path])?;
-    let mut pages = HashSet::new();
-    for line in listing.lines().skip(2) {
-        let columns: Vec<_> = line.split_whitespace().collect();
-        if columns.len() > 2 && columns[2] == "image" {
-            if let Ok(page) = columns[0].parse::<usize>() {
-                pages.insert(page);
-            }
-        }
+    let mut pages = Vec::with_capacity(page_count);
+    for page_index in 0..page_count {
+        let text = doc
+            .extract_text(page_index)
+            .map_err(|error| format!("Could not extract text from page {}: {error}", page_index + 1))?;
+        pages.push(text.trim_matches('\n').trim_end().to_string());
     }
     Ok(pages)
 }
 
 fn extract_images(path: &str, staging_dir: &Path) -> Result<Vec<Value>, String> {
-    fs::create_dir_all(staging_dir).map_err(|error| format!("Could not create image staging dir: {error}"))?;
-    let prefix = staging_dir.join("img");
-    let _ = run_tool(
-        "pdfimages",
-        &[
-            "-png",
-            "-p",
-            path,
-            prefix.to_str().ok_or("Invalid staging path")?,
-        ],
-    )?;
+    fs::create_dir_all(staging_dir)
+        .map_err(|error| format!("Could not create image staging dir: {error}"))?;
 
-    let pages_with_images = image_pages(path).unwrap_or_default();
+    let doc = PdfDocument::open(path).map_err(|error| format!("Could not open PDF: {error}"))?;
+    let page_count = doc
+        .page_count()
+        .map_err(|error| format!("Could not read PDF page count: {error}"))?;
+
     let mut images = Vec::new();
-    let mut entries: Vec<_> = fs::read_dir(staging_dir)
-        .map_err(|error| format!("Could not read staging dir: {error}"))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg"))
-                .unwrap_or(false)
-        })
-        .collect();
-    entries.sort();
+    let mut image_index = 0usize;
 
-    for (index, file_path) in entries.into_iter().enumerate() {
-        let file_name = file_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("image.png")
-            .to_string();
-        // pdfimages -p embeds page number in filename like img-001-000.png
-        let page_number = file_name
-            .split('-')
-            .nth(1)
-            .and_then(|part| part.parse::<usize>().ok())
-            .or_else(|| pages_with_images.iter().next().copied())
-            .unwrap_or(1);
-        let id = format!("img-{index}");
-        let stable_name = format!("page-{page_number:03}-img-{index:03}.png");
-        images.push(json!({
-            "id": id,
-            "pageNumber": page_number,
-            "stagingPath": file_path.to_string_lossy(),
-            "fileName": stable_name
-        }));
+    for page_index in 0..page_count {
+        let page_number = page_index + 1;
+        let page_images = doc.extract_images(page_index).map_err(|error| {
+            format!("Could not extract images from page {page_number}: {error}")
+        })?;
+
+        for image in page_images {
+            let stable_name = format!("page-{page_number:03}-img-{image_index:03}.png");
+            let file_path = staging_dir.join(&stable_name);
+            image
+                .save_as_png(&file_path)
+                .map_err(|error| format!("Could not save extracted image {stable_name}: {error}"))?;
+
+            images.push(json!({
+                "id": format!("img-{image_index}"),
+                "pageNumber": page_number,
+                "stagingPath": file_path.to_string_lossy(),
+                "fileName": stable_name
+            }));
+            image_index += 1;
+        }
     }
+
     Ok(images)
 }
 
@@ -206,17 +270,20 @@ fn emit_progress_full(
 }
 
 fn run_pi_agent(app: Option<&AppHandle>, input: Value, progress_event: &str) -> Result<Value, String> {
-    let runner = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../agent-dist/runner.js")
-        .canonicalize()
-        .map_err(|error| format!("Pi agent sidecar is not built: {error}"))?;
-    let mut child = Command::new("node")
-        .arg(runner)
+    let (program, args) = agent_command()?;
+    let mut command = Command::new(&program);
+    command
+        .args(&args)
+        .env("FIELDNOTE_PROMPTS_ROOT", prompts_root())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("Could not start the Pi TypeScript agent: {error}"))?;
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "Could not start the Pi agent ({}): {error}",
+            program.display()
+        )
+    })?;
 
     child
         .stdin
@@ -657,30 +724,30 @@ async fn ingest_document(
     emit_progress(&app, "ingestion-progress", &format!("Extracting text from {source_file}"));
 
     let (pages, images) = if extension == "pdf" {
-        let raw = run_tool("pdftotext", &["-layout", &path, "-"])?;
-        let raw_pages: Vec<String> = raw
-            .split('\u{000c}')
-            .map(|page| page.trim_matches('\n').trim_end().to_string())
-            .filter(|page| !page.is_empty())
+        let raw_pages = extract_pdf_pages(&path)?;
+        let non_empty: Vec<(usize, String)> = raw_pages
+            .into_iter()
+            .enumerate()
+            .filter(|(_, content)| !content.trim().is_empty())
             .collect();
-        if raw_pages.is_empty() {
+        if non_empty.is_empty() {
             return Err(
                 "No text was extracted from the PDF. This prototype requires a text-based PDF."
                     .into(),
             );
         }
+        let page_total = non_empty.len();
         let staging = knowledge_base_root().join(".staging").join(slugify(&title));
         emit_progress_full(
             &app,
             "ingestion-progress",
-            &format!("Extracted {} pages · pulling images and graphs", raw_pages.len()),
+            &format!("Extracted {page_total} pages · pulling images and graphs"),
             Some(0),
-            Some(raw_pages.len()),
+            Some(page_total),
         );
         let images = extract_images(&path, &staging).unwrap_or_else(|_| Vec::new());
-        let pages: Vec<Value> = raw_pages
+        let pages: Vec<Value> = non_empty
             .into_iter()
-            .enumerate()
             .map(|(offset, content)| {
                 json!({
                     "pageNumber": offset + 1,
@@ -876,6 +943,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            configure_runtime_paths(app.handle()).map_err(|message| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, message))
+                    as Box<dyn std::error::Error>
+            })?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_knowledge_base_root,
             list_knowledge_tree,

@@ -243,7 +243,7 @@ export default function KnowledgeBasePage({
     }
   });
   const editorKey = useMemo(() => `${selectedPath ?? "empty"}-${mode}`, [selectedPath, mode]);
-  const latestProgress = progressLines.at(-1);
+  const latestProgress = progressLines[progressLines.length - 1];
   const overlayLogRef = useRef<HTMLDivElement>(null);
   const pagePercent = pageTotal > 0 ? Math.min(100, Math.round((pagesDone / pageTotal) * 100)) : 0;
   const ingestSessionRef = useRef(0);

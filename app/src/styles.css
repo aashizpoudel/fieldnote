@@ -8,7 +8,7 @@ button { color: inherit; }
 .app-shell { display: grid; grid-template-columns: 226px minmax(0, 1fr); height: 100vh; overflow: hidden; }
 .sidebar { display: flex; flex-direction: column; padding: 22px 14px 14px; background: #202820; color: #f5f7f1; border-right: 1px solid #303a30; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 28px; }
-.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; background: #d6ef79; color: #202820; font-family: "Libre Franklin"; font-weight: 700; border-radius: 6px; }
+.brand-mark { display: block; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 6px; }
 .brand b, .brand span { display: block; }.brand b { font-family: "Libre Franklin"; font-size: 14px; }.brand span { margin-top: 2px; color: #aeb8aa; font-size: 10px; }
 nav { display: grid; gap: 4px; } nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: 0; border-radius: 6px; background: transparent; color: #aeb8aa; cursor: pointer; text-align: left; } nav button:hover { color: white; background: #293229; } nav button.active { color: #fff; background: #344034; }
 .sidebar-footer { margin-top: auto; }.connection { display: grid; grid-template-columns: 30px 1fr 18px; align-items: center; gap: 8px; width: 100%; padding: 9px; color: #e6eae2; background: #293229; border: 1px solid #3b463a; border-radius: 6px; cursor: pointer; text-align: left; }.connection > span { display: grid; place-items: center; width: 30px; height: 30px; background: #3b463a; border-radius: 5px; }.connection > span.online { color: #d6ef79; }.connection b, .connection small { display: block; }.connection b { font-size: 12px; }.connection small { color: #9eaa9a; font-size: 10px; margin-top: 2px; }

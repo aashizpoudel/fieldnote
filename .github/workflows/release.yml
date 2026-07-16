@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            label: macos-aarch64
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            label: macos-x86_64
+          - platform: windows-latest
+            args: ''
+            label: windows-x86_64
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./app/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build and upload release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: v__VERSION__
+          releaseName: Fieldnote v__VERSION__
+          releaseBody: |
+            Fieldnote desktop builds for this version.
+
+            - **macOS Apple Silicon** (M1/M2/M3/M4): `.dmg` / `.app` (`aarch64`)
+            - **macOS Intel**: `.dmg` / `.app` (`x86_64`)
+            - **Windows**: installer / executable
+
+            macOS builds are unsigned; Gatekeeper may require right-click → Open on first launch.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

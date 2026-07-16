@@ -9,6 +9,8 @@ agent-dist/
 # Tauri / Rust
 app/src-tauri/target/
 app/src-tauri/gen/
+app/src-tauri/binaries/
+app/src-tauri/resources/prompts/
 
 # Knowledge base staging
 knowledge_base/.staging/

@@ -57,7 +57,11 @@ type ChatSource = {
 };
 
 function promptsRoot(): string {
-  // app/agent-dist/runner.js -> ../../prompts
+  const fromEnv = process.env.FIELDNOTE_PROMPTS_ROOT?.trim();
+  if (fromEnv) {
+    return path.resolve(fromEnv);
+  }
+  // Dev: app/agent-dist/runner.js or compiled binary near repo -> ../../prompts
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../prompts");
 }
 

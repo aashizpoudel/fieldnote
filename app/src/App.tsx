@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { testLlm } from "./api";
+import brandMark from "./assets/brand-mark.svg";
 import ChatPage from "./ChatPage";
 import KnowledgeBasePage from "./KnowledgeBasePage";
 import type { Settings } from "./types";
@@ -174,7 +175,7 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">F</div>
+          <img className="brand-mark" src={brandMark} alt="" width={32} height={32} />
           <div>
             <b>Fieldnote</b>
             <span>Your agent crop & weed sources, on your own device</span>

@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "build:agent": "tsc -p agent/tsconfig.json",
-    "dev": "npm run build:agent && vite",
-    "build": "npm run build:agent && tsc && vite build",
+    "build:agent-sidecar": "node scripts/build-agent-sidecar.mjs",
+    "dev": "npm run build:agent && npm run build:agent-sidecar && vite",
+    "build": "npm run build:agent && npm run build:agent-sidecar && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
