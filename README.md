@@ -15,6 +15,8 @@ Team members: Aashish Poudel, Ben Shacklett, Utsab Bhandari, Blessing Ademola, S
 
 ![Ask chat UI](docs/ask.png)
 
+https://github.com/aashizpoudel/fieldnote/raw/master/docs/foxtail_chat.mp4
+
 ## Requirements
 
 - Node.js 20+
@@ -147,4 +149,4 @@ Fieldnote’s agent workflow is built with [`@earendil-works/pi-agent-core`](htt
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE). Reuse is welcome; please keep the copyright and license notice.
+This project is licensed under the [MIT License](LICENSE).

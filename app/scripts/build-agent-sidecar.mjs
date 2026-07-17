@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,15 +17,20 @@ const bunTargetByTriple = {
   "aarch64-unknown-linux-gnu": "bun-linux-arm64",
 };
 
-function whichBun() {
+function bunAvailable() {
   try {
-    return execSync("command -v bun", { encoding: "utf8" }).trim();
+    execSync("bun --version", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      shell: true,
+    });
+    return true;
   } catch {
-    return "";
+    return false;
   }
 }
 
-if (!whichBun()) {
+if (!bunAvailable()) {
   console.error(
     "bun is required to package the Pi agent sidecar.\n" +
       "Install from https://bun.sh then re-run the build.",
@@ -36,7 +41,10 @@ if (!whichBun()) {
 const ext = process.platform === "win32" ? ".exe" : "";
 const targetTriple =
   process.env.TAURI_ENV_TARGET_TRIPLE?.trim() ||
-  execSync("rustc --print host-tuple", { encoding: "utf8" }).trim();
+  execSync("rustc --print host-tuple", {
+    encoding: "utf8",
+    shell: true,
+  }).trim();
 
 if (!targetTriple) {
   console.error("Could not determine Rust target triple");
@@ -65,11 +73,18 @@ if (bunTarget) {
 }
 
 console.log(`Building agent sidecar → ${outfile}`);
-execSync(`bun ${args.map((a) => JSON.stringify(a)).join(" ")}`, {
+const bunCmd = process.platform === "win32" ? "bun.cmd" : "bun";
+const result = spawnSync(bunCmd, args, {
   cwd: appRoot,
   stdio: "inherit",
-  shell: true,
+  shell: process.platform === "win32",
+  windowsHide: true,
 });
+
+if (result.status !== 0) {
+  console.error(`bun build failed with exit code ${result.status ?? "unknown"}`);
+  process.exit(result.status ?? 1);
+}
 
 if (!fs.existsSync(outfile)) {
   console.error(`Sidecar was not created at ${outfile}`);
