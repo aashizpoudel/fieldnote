@@ -17,20 +17,50 @@ const bunTargetByTriple = {
   "aarch64-unknown-linux-gnu": "bun-linux-arm64",
 };
 
-function bunAvailable() {
+function resolveBunBinary() {
+  const isWin = process.platform === "win32";
+  const bunName = isWin ? "bun.exe" : "bun";
+  const candidates = [];
+
+  if (process.env.BUN_INSTALL) {
+    candidates.push(path.join(process.env.BUN_INSTALL, "bin", bunName));
+  }
+
+  const home = process.env.USERPROFILE || process.env.HOME;
+  if (home) {
+    candidates.push(path.join(home, ".bun", "bin", bunName));
+  }
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
   try {
-    execSync("bun --version", {
+    const lookup = isWin ? "where.exe bun" : "command -v bun";
+    const matches = execSync(lookup, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       shell: true,
-    });
-    return true;
+    })
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (const match of matches) {
+      const exeSibling = match.replace(/\.cmd$/i, ".exe");
+      if (fs.existsSync(exeSibling)) return exeSibling;
+      if (fs.existsSync(match)) return match;
+    }
   } catch {
-    return false;
+    // not on PATH
   }
+
+  return null;
 }
 
-if (!bunAvailable()) {
+const bunBin = resolveBunBinary();
+if (!bunBin) {
   console.error(
     "bun is required to package the Pi agent sidecar.\n" +
       "Install from https://bun.sh then re-run the build.",
@@ -72,12 +102,10 @@ if (bunTarget) {
   args.push("--target", bunTarget);
 }
 
-console.log(`Building agent sidecar → ${outfile}`);
-const bunCmd = process.platform === "win32" ? "bun.cmd" : "bun";
-const result = spawnSync(bunCmd, args, {
+console.log(`Building agent sidecar with ${bunBin} → ${outfile}`);
+const result = spawnSync(bunBin, args, {
   cwd: appRoot,
   stdio: "inherit",
-  shell: process.platform === "win32",
   windowsHide: true,
 });
 
