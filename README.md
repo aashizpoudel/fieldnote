@@ -9,14 +9,19 @@ Team members: Aashish Poudel, Ben Shacklett, Utsab Bhandari, Blessing Ademola, S
 
 ## Download
 
-Prebuilt macOS apps from the [v0.1.0 release](https://github.com/aashizpoudel/fieldnote/releases/tag/v0.1.0):
+Prebuilt apps from the [v0.1.0 release](https://github.com/aashizpoudel/fieldnote/releases/tag/v0.1.0):
+
+**macOS**
 
 - [Apple Silicon (M1/M2/M3/M4) — `.dmg`](https://github.com/aashizpoudel/fieldnote/releases/download/v0.1.0/Fieldnote_0.1.0_aarch64.dmg)
 - [Intel Mac — `.dmg`](https://github.com/aashizpoudel/fieldnote/releases/download/v0.1.0/Fieldnote_0.1.0_x64.dmg)
 
-Builds are unsigned; on first launch you may need to right-click the app → **Open**.
+macOS builds are unsigned; on first launch you may need to right-click the app → **Open**, or allow it under **System Settings → Privacy & Security**.
 
-You may have to go to your privacy and security settings in settings and click open anyway button.
+**Windows**
+
+- [Installer — `.exe`](https://github.com/aashizpoudel/fieldnote/releases/download/v0.1.0/Fieldnote_0.1.0_x64-setup.exe)
+- [Installer — `.msi`](https://github.com/aashizpoudel/fieldnote/releases/download/v0.1.0/Fieldnote_0.1.0_x64_en-US.msi)
 
 ## Screenshot and Video
 
