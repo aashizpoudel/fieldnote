@@ -7,6 +7,19 @@ This application was built to present at ASABE Hackathon at ASABE AIM 2026, Indi
 
 Team members: Aashish Poudel, Ben Shacklett, Utsab Bhandari, Blessing Ademola, Shaghayegh Janbazi Alamdari, Nidhi Rani
 
+## Download
+
+Prebuilt macOS apps from the [v0.1.0 release](https://github.com/aashizpoudel/fieldnote/releases/tag/v0.1.0):
+
+- [Apple Silicon (M1/M2/M3/M4) — `.dmg`](https://github.com/aashizpoudel/fieldnote/releases/download/v0.1.0/Fieldnote_0.1.0_aarch64.dmg)
+- [Intel Mac — `.dmg`](https://github.com/aashizpoudel/fieldnote/releases/download/v0.1.0/Fieldnote_0.1.0_x64.dmg)
+
+Builds are unsigned; on first launch you may need to right-click the app → **Open**.
+
+You may have to go to your privacy and security settings in settings and click open anyway button.
+
+## Screenshot and Video
+
 **Sources** — browse and preview the local field-guide library:
 
 ![Sources library](docs/sources.png)
@@ -15,9 +28,9 @@ Team members: Aashish Poudel, Ben Shacklett, Utsab Bhandari, Blessing Ademola, S
 
 ![Ask chat UI](docs/ask.png)
 
-https://github.com/aashizpoudel/fieldnote/raw/master/docs/foxtail_chat.mp4
 
-## Requirements
+
+## Requirements for running from the source code
 
 - Node.js 20+
 - Rust (stable) and Cargo
